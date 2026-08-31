@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+#
+# sheetassembly — schedule WASI/WASM workloads instead of Docker containers.
+#
+# A Sheet-Native Computing Foundation (SNCF) experiment: a "pod" is a WASM
+# module run via wasmtime, not a container run via Docker. The Sheet stays the
+# source of truth; a wasm-aware kubelet shim reconciles modules onto nodes.
+#
+# Subcommands:
+#   run      <module.wasm> [args...]              run a WASI module via wasmtime
+#   build    <module.wat>  [-o out.wasm]          compile .wat -> .wasm via wat2wasm (wabt)
+#   schedule <module.wasm> --name N --replicas R  emit a Sheeternetes-style manifest
+#
+# Requires: bash. At runtime: wasmtime (run) and/or wabt's wat2wasm (build).
+#
+set -euo pipefail
+
+PROG="$(basename "$0")"
+
+log()  { printf '%s\n' "$*" >&2; }
+die()  { log "$PROG: $*"; exit 1; }
+
+usage() {
+  cat >&2 <<EOF
+$PROG — schedule WASI/WASM workloads from a Sheet
+
+Usage:
+  $PROG run      <module.wasm> [args...]
+  $PROG build    <module.wat> [-o <out.wasm>]
+  $PROG schedule <module.wasm> --name <name> --replicas <n>
+  $PROG help
+
+Examples:
+  wat2wasm hello.wat -o hello.wasm && $PROG run hello.wasm
+  $PROG build hello.wat
+  $PROG schedule hello.wasm --name reconciler --replicas 3
+EOF
+}
+
+# --- run ---------------------------------------------------------------------
+cmd_run() {
+  local module="${1:-}"
+  [ -n "$module" ] || { log "$PROG run: missing <module.wasm>"; usage; exit 2; }
+  shift
+  [ -f "$module" ] || die "no such module: $module"
+
+  if ! command -v wasmtime >/dev/null 2>&1; then
+    log "$PROG: wasmtime not found — it is required to run WASI modules."
+    log ""
+    log "Install it with one of:"
+    log "  curl https://wasmtime.dev/install.sh -sSf | bash   # official installer"
+    log "  brew install wasmtime                              # macOS / Homebrew"
+    log "  cargo install wasmtime-cli                         # from source"
+    log ""
+    log "Then re-run: $PROG run $module"
+    exit 127
+  fi
+
+  log "[sheetassembly] running pod (wasm): $module"
+  # Everything after the module path is passed to the guest module.
+  exec wasmtime run "$module" -- "$@"
+}
+
+# --- build -------------------------------------------------------------------
+cmd_build() {
+  local src="" out=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -o|--output) out="${2:-}"; shift 2 ;;
+      -*)          die "build: unknown flag: $1" ;;
+      *)           src="$1"; shift ;;
+    esac
+  done
+  [ -n "$src" ] || { log "$PROG build: missing <module.wat>"; usage; exit 2; }
+  [ -f "$src" ] || die "no such source: $src"
+  [ -n "$out" ] || out="${src%.wat}.wasm"
+
+  if ! command -v wat2wasm >/dev/null 2>&1; then
+    log "$PROG: wat2wasm not found — it is required to compile .wat -> .wasm."
+    log ""
+    log "It ships with the WebAssembly Binary Toolkit (wabt). Install with:"
+    log "  brew install wabt                    # macOS / Homebrew"
+    log "  apt-get install wabt                 # Debian / Ubuntu"
+    log "  https://github.com/WebAssembly/wabt  # prebuilt binaries"
+    log ""
+    log "Then re-run: $PROG build $src"
+    exit 127
+  fi
+
+  log "[sheetassembly] compiling $src -> $out"
+  wat2wasm "$src" -o "$out"
+  log "[sheetassembly] built $out"
+}
+
+# --- schedule ----------------------------------------------------------------
+cmd_schedule() {
+  local module="" name="" replicas=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name)     name="${2:-}"; shift 2 ;;
+      --replicas) replicas="${2:-}"; shift 2 ;;
+      -*)         die "schedule: unknown flag: $1" ;;
+      *)          module="$1"; shift ;;
+    esac
+  done
+  [ -n "$module" ]   || { log "$PROG schedule: missing <module.wasm>"; usage; exit 2; }
+  [ -n "$name" ]     || die "schedule: --name is required"
+  [ -n "$replicas" ] || die "schedule: --replicas is required"
+  case "$replicas" in
+    ''|*[!0-9]*) die "schedule: --replicas must be a non-negative integer, got: $replicas" ;;
+  esac
+
+  # Emit a Sheeternetes-style deployment manifest. The kubelet in the
+  # mainline Sheeternetes project pins containers by "image"; a wasm-aware
+  # kubelet shim keys on "runtime":"wasm" and runs the "module" via wasmtime
+  # instead of docker. cpu_req/mem_req keep the bin-packing scheduler happy.
+  if command -v jq >/dev/null 2>&1; then
+    jq -n \
+      --arg name "$name" \
+      --arg module "$module" \
+      --argjson replicas "$replicas" \
+      '{
+        _note: "SheetAssembly WASI workload. runtime=wasm -> a wasm-aware kubelet shim runs `wasmtime run <module>` per replica instead of docker.",
+        deployments: [
+          {
+            name: $name,
+            runtime: "wasm",
+            module: $module,
+            image: "",
+            replicas: $replicas,
+            cpu_req: 50,
+            mem_req: 16,
+            command: ""
+          }
+        ]
+      }'
+  else
+    # jq is optional for schedule; fall back to a hand-built literal.
+    cat <<EOF
+{
+  "_note": "SheetAssembly WASI workload. runtime=wasm -> a wasm-aware kubelet shim runs \`wasmtime run <module>\` per replica instead of docker.",
+  "deployments": [
+    {
+      "name": "$name",
+      "runtime": "wasm",
+      "module": "$module",
+      "image": "",
+      "replicas": $replicas,
+      "cpu_req": 50,
+      "mem_req": 16,
+      "command": ""
+    }
+  ]
+}
+EOF
+  fi
+}
+
+# --- dispatch ----------------------------------------------------------------
+main() {
+  local sub="${1:-help}"
+  [ $# -gt 0 ] && shift || true
+  case "$sub" in
+    run)         cmd_run "$@" ;;
+    build)       cmd_build "$@" ;;
+    schedule)    cmd_schedule "$@" ;;
+    help|-h|--help) usage ;;
+    *)           log "$PROG: unknown subcommand: $sub"; usage; exit 2 ;;
+  esac
+}
+
+main "$@"
