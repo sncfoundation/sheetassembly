@@ -9,7 +9,7 @@ A <a href="https://sncfoundation.github.io">Sheet-Native Computing Foundation</a
 
 ---
 
-**Status:** 📝 Unsaved Draft &#183; this project is a proposal. Design notes and contributions are welcome.
+**Status:** 💾 Autosaving &#183; promoted from Unsaved Draft. Working code, released as [v0.1.0](https://github.com/sncfoundation/sheetassembly/releases/tag/v0.1.0), and the [tracking issue #24](https://github.com/sncfoundation/sheeternetes/issues/24) is closed. Google keeps saving it.
 
 ## About
 
@@ -96,7 +96,7 @@ sheetassembly schedule hello.wasm --name reconciler --replicas 3
 
 ## Get involved
 
-- 📋 Tracking issue &amp; design: [sncfoundation/sheeternetes#24](https://github.com/sncfoundation/sheeternetes/issues/24)
+- 📋 Tracking issue &amp; design: [sncfoundation/sheeternetes#24](https://github.com/sncfoundation/sheeternetes/issues/24) (closed)
 - 🗺️ [SNCF Landscape](https://sncfoundation.github.io/landscape.html)
 - 🧩 [All projects](https://sncfoundation.github.io/projects.html)
 - ⚖️ [Governance &amp; how to contribute](https://github.com/sncfoundation/governance)
