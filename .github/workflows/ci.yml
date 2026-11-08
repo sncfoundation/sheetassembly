@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Shell syntax
+        run: bash -n sheetassembly
+      - name: ShellCheck
+        run: shellcheck -S warning sheetassembly
+      - name: WAT module assembles
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q wabt
+          wat2wasm hello.wat -o /tmp/hello.wasm
